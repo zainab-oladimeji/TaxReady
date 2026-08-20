@@ -1,16 +1,6 @@
 import { MongoClient, Db } from "mongodb";
-
-/**
- * Single MongoDB connection, created lazily on first use and reused across
- * hot reloads in dev and warm Cloud Run instances in production. This is
- * the ONLY place that should call `new MongoClient(...)` — every API route
- * and server function gets its DB handle via `getDb()`.
- *
- * Deliberately lazy: connecting eagerly at module load would throw during
- * `next build`'s page-data collection (which imports every route module)
- * whenever MONGODB_URI isn't set at build time — e.g. in CI, or when only
- * building the demo-mode parts of the app.
- */
+import { constants as cryptoConstants } from "crypto";
+import { createSecureContext } from "tls";
 
 const MONGODB_DB_NAME = process.env.MONGODB_DB_NAME ?? "taxready";
 
@@ -26,7 +16,12 @@ function createClientPromise(): Promise<MongoClient> {
       "Missing MONGODB_URI. Set it in .env.local (see .env.example) — e.g. a MongoDB Atlas connection string."
     );
   }
-  const client = new MongoClient(uri);
+
+  const client = new MongoClient(uri, {
+    secureContext: createSecureContext({
+      secureOptions: cryptoConstants.SSL_OP_LEGACY_SERVER_CONNECT
+    })
+  });
   return client.connect();
 }
 
