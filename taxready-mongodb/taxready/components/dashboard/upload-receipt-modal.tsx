@@ -19,7 +19,8 @@ export function UploadReceiptModal({ onClose }: { onClose: () => void }) {
     setStageIndex(0);
     const timers = STAGES.slice(0, -1).map((_, i) => setTimeout(() => setStageIndex(i + 1), (i + 1) * 500));
     try {
-      const receipt = await uploadReceipt(file.name, file.type || "image/jpeg");
+      const base64 = await fileToBase64(file);
+      const receipt = await uploadReceipt(file.name, file.type || "image/jpeg", base64);
       setTimeout(() => {
         setStageIndex(STAGES.length - 1);
         setResult(receipt);
@@ -27,6 +28,20 @@ export function UploadReceiptModal({ onClose }: { onClose: () => void }) {
     } finally {
       timers.forEach(clearTimeout);
     }
+  }
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        // reader.result is a data URL like "data:image/jpeg;base64,AAAA…" —
+        // Gemini wants only the raw base64 payload after the comma.
+        const result = reader.result as string;
+        resolve(result.split(",")[1] ?? "");
+      };
+      reader.onerror = () => reject(new Error("Could not read the file."));
+      reader.readAsDataURL(file);
+    });
   }
 
   return (

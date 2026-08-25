@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Search, ChevronLeft, ChevronRight, ArrowUpDown, FileCheck2, Flag, Paperclip } from "lucide-react";
 import { Transaction } from "@/types";
 import { formatMoney, formatDate } from "@/lib/format";
@@ -18,6 +18,18 @@ export function TransactionTable({ initialTypeFilter }: { initialTypeFilter?: "i
   const [sortDesc, setSortDesc] = useState(true);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Next.js reuses this component instance when navigating between
+  // /dashboard/transactions, ?type=expense and ?type=income (same route,
+  // different search params), so the typeFilter useState above only ever
+  // runs once. Without this effect, clicking "Expenses" after "Sales" (or
+  // after "Transactions") changes the URL but the table silently keeps
+  // showing whatever filter it already had — it looks like the sidebar
+  // link does nothing.
+  useEffect(() => {
+    setTypeFilter(initialTypeFilter ?? "all");
+    setPage(1);
+  }, [initialTypeFilter]);
 
   const filtered = useMemo(() => {
     let list = transactions;

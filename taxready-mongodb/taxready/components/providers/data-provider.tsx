@@ -25,7 +25,7 @@ interface DataContextValue {
   receipts: Receipt[];
   readiness: ReturnType<typeof calculateReadiness>;
   importTransactions: (rows: { date: string; description: string; amount: number; type: "income" | "expense" }[]) => Promise<void>;
-  uploadReceipt: (fileName: string, mimeType: string) => Promise<Receipt>;
+  uploadReceipt: (fileName: string, mimeType: string, base64: string) => Promise<Receipt>;
   updateTransactionCategory: (id: string, category: string, status: Transaction["status"]) => void;
   isProcessing: boolean;
   isLive: boolean;
@@ -129,14 +129,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   );
 
   const uploadReceipt = useCallback(
-    async (fileName: string, mimeType: string): Promise<Receipt> => {
+    async (fileName: string, mimeType: string, base64: string): Promise<Receipt> => {
       setIsProcessing(true);
       try {
         const endpoint = isLive ? "/api/receipts" : "/api/receipts/process";
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileName, mimeType })
+          body: JSON.stringify({ fileName, mimeType, base64 })
         });
         const data = await res.json();
 

@@ -62,7 +62,11 @@ export function PricingSection() {
         <h2 className="mt-3 font-display text-3xl leading-tight text-ink sm:text-4xl">Start free. Grow into it.</h2>
         <div className="mt-10 grid gap-5 md:grid-cols-3">
           {PLANS.map((p) => (
-            <Card key={p.name} className={p.featured ? "border-ink ring-1 ring-ink" : undefined}>
+            <Card
+              key={p.name}
+              id={p.name === "Accountant" ? "accountants" : undefined}
+              className={p.featured ? "border-ink ring-1 ring-ink scroll-mt-24" : "scroll-mt-24"}
+            >
               <CardContent>
                 <div className="flex items-center justify-between">
                   <h3 className="font-display text-xl text-ink">{p.name}</h3>
