@@ -26,6 +26,20 @@ export interface AIProvider {
     taxConfig: CountryTaxConfig
   ): Promise<ClassificationResult>;
 
+  /**
+   * Classify many transactions in a single AI call instead of one call per
+   * row. Always prefer this over calling classifyTransaction in a loop for
+   * bulk imports — it cuts API usage (and free-tier quota consumption) by
+   * roughly the batch size, and it's faster since it's one round trip
+   * instead of N parallel ones. Results are returned in the same order as
+   * the input array — implementations must preserve order even though the
+   * model returns a JSON array.
+   */
+  classifyTransactionsBatch(
+    transactions: Pick<Transaction, "description" | "amount" | "type" | "currency" | "merchant">[],
+    taxConfig: CountryTaxConfig
+  ): Promise<ClassificationResult[]>;
+
   extractReceipt(input: { fileName: string; mimeType: string; base64?: string }): Promise<ReceiptExtraction>;
 
   summarizePeriod(context: FinancialContext, periodLabel: string): Promise<PeriodSummary>;

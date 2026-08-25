@@ -44,30 +44,34 @@ export async function POST(req: NextRequest) {
   const provider = await getAIProvider();
 
   const now = new Date().toISOString();
-  const classified: Omit<Transaction, "id">[] = await Promise.all(
-    parsed.data.rows.map(async (row) => {
-      const result = await provider.classifyTransaction(
-        { description: row.description, amount: row.amount, type: row.type, currency: business.currency },
-        taxConfig
-      );
-      return {
-        businessId: business.id,
-        date: row.date,
-        description: row.description,
-        amount: row.amount,
-        currency: business.currency,
-        type: row.type,
-        category: result.category,
-        subcategory: result.subcategory,
-        taxRelevance: result.taxRelevance,
-        aiConfidence: result.confidence,
-        aiReason: result.reason,
-        status: result.requiresReview ? "flagged" : "pending",
-        createdAt: now,
-        updatedAt: now
-      };
-    })
+  const results = await provider.classifyTransactionsBatch(
+    parsed.data.rows.map((row) => ({
+      description: row.description,
+      amount: row.amount,
+      type: row.type,
+      currency: business.currency
+    })),
+    taxConfig
   );
+  const classified: Omit<Transaction, "id">[] = parsed.data.rows.map((row, i) => {
+    const result = results[i];
+    return {
+      businessId: business.id,
+      date: row.date,
+      description: row.description,
+      amount: row.amount,
+      currency: business.currency,
+      type: row.type,
+      category: result.category,
+      subcategory: result.subcategory,
+      taxRelevance: result.taxRelevance,
+      aiConfidence: result.confidence,
+      aiReason: result.reason,
+      status: result.requiresReview ? "flagged" : "pending",
+      createdAt: now,
+      updatedAt: now
+    };
+  });
 
   const inserted = await insertTransactions(business.id, classified);
   return NextResponse.json({ transactions: inserted });

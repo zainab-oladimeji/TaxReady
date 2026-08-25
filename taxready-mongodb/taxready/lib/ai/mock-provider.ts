@@ -77,6 +77,16 @@ export class MockAIProvider implements AIProvider {
     };
   }
 
+  async classifyTransactionsBatch(
+    transactions: Pick<Transaction, "description" | "amount" | "type" | "currency" | "merchant">[],
+    taxConfig: CountryTaxConfig
+  ): Promise<ClassificationResult[]> {
+    // Mock mode runs fully offline with no API quota to conserve, so a
+    // simple loop over the existing per-row logic is fine here — the
+    // batching optimization only matters for the real Gemini providers.
+    return Promise.all(transactions.map((t) => this.classifyTransaction(t, taxConfig)));
+  }
+
   async extractReceipt(input: { fileName: string; mimeType: string }): Promise<ReceiptExtraction> {
     // Deterministic pseudo-extraction so repeated demo uploads behave consistently.
     const seed = input.fileName.length + input.fileName.charCodeAt(0);

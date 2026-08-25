@@ -61,6 +61,35 @@ export class GeminiAIProvider implements AIProvider {
     return parseJsonResponse<ClassificationResult>(result);
   }
 
+  async classifyTransactionsBatch(
+    transactions: Pick<Transaction, "description" | "amount" | "type" | "currency" | "merchant">[],
+    taxConfig: CountryTaxConfig
+  ): Promise<ClassificationResult[]> {
+    if (transactions.length === 0) return [];
+
+    const system =
+      "You are a financial transaction classification assistant for TaxReady, operating in " +
+      `${taxConfig.countryName}. You will receive a JSON array of transactions. Classify EACH ONE using ` +
+      "ONLY the information provided for it. Do not invent facts. Do not claim legal tax compliance. " +
+      "Return a JSON array with EXACTLY one result per input transaction, IN THE SAME ORDER as the " +
+      "input array — do not omit, merge, or reorder entries. Each result object must have fields: " +
+      "category, subcategory (optional), taxRelevance (one of: vat_related, withholding_tax_related, " +
+      "potentially_deductible, needs_documentation, review_required, not_tax_relevant), " +
+      "confidence (0-1), reason (one sentence), requiresReview (boolean).";
+
+    const model = this.generativeModel(system);
+    const result = await model.generateContent(JSON.stringify(transactions));
+    const parsed = parseJsonResponse<ClassificationResult[]>(result);
+
+    if (!Array.isArray(parsed) || parsed.length !== transactions.length) {
+      throw new Error(
+        `Gemini returned ${Array.isArray(parsed) ? parsed.length : "a non-array"} results for ` +
+          `${transactions.length} transactions — refusing to trust misaligned batch output.`
+      );
+    }
+    return parsed;
+  }
+
   async extractReceipt(input: { fileName: string; mimeType: string; base64?: string }): Promise<ReceiptExtraction> {
     if (!input.base64) {
       throw new Error("extractReceipt requires base64 document data for the Gemini provider.");

@@ -89,37 +89,43 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Demo mode: classify client-side against the stateless AI endpoint,
-        // keep everything in memory — nothing is persisted anywhere.
-        const classified = await Promise.all(
-          rows.map(async (row, i) => {
-            const res = await fetch("/api/ai/classify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ description: row.description, amount: row.amount, type: row.type, currency: "NGN" })
-            });
-            const classification = await res.json();
-            const now = new Date().toISOString();
-            const txn: Transaction = {
-              id: `import-${Date.now()}-${i}`,
-              businessId: DEMO_BUSINESS.id,
-              date: row.date,
+        // Demo mode: classify the whole import in one batched AI call
+        // instead of one call per row, keep everything in memory —
+        // nothing is persisted anywhere.
+        const res = await fetch("/api/ai/classify-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transactions: rows.map((row) => ({
               description: row.description,
               amount: row.amount,
-              currency: "NGN",
               type: row.type,
-              category: classification.category,
-              subcategory: classification.subcategory,
-              taxRelevance: classification.taxRelevance,
-              aiConfidence: classification.confidence,
-              aiReason: classification.reason,
-              status: classification.requiresReview ? "flagged" : "pending",
-              createdAt: now,
-              updatedAt: now
-            };
-            return txn;
+              currency: "NGN"
+            }))
           })
-        );
+        });
+        const { results } = await res.json();
+        const now = new Date().toISOString();
+        const classified: Transaction[] = rows.map((row, i) => {
+          const classification = results[i];
+          return {
+            id: `import-${Date.now()}-${i}`,
+            businessId: DEMO_BUSINESS.id,
+            date: row.date,
+            description: row.description,
+            amount: row.amount,
+            currency: "NGN",
+            type: row.type,
+            category: classification.category,
+            subcategory: classification.subcategory,
+            taxRelevance: classification.taxRelevance,
+            aiConfidence: classification.confidence,
+            aiReason: classification.reason,
+            status: classification.requiresReview ? "flagged" : "pending",
+            createdAt: now,
+            updatedAt: now
+          };
+        });
         setTransactions((prev) => [...classified, ...prev]);
       } finally {
         setIsProcessing(false);
