@@ -31,3 +31,15 @@ export function passwordResetEmail(link: string): { subject: string; html: strin
     `)
   };
 }
+
+export function accountantInviteEmail(accountantName: string, signUpLink: string): { subject: string; html: string } {
+  return {
+    subject: `${accountantName} invited you to TaxReady`,
+    html: wrapper(`
+      <p><strong>${accountantName}</strong> added you as a client on TaxReady to help manage your business's
+      bookkeeping and tax readiness.</p>
+      <p>Create your own free TaxReady account to start uploading receipts and tracking transactions:</p>
+      <p><a href="${signUpLink}" style="display:inline-block;background:#111;color:#fff;padding:10px 20px;border-radius:999px;text-decoration:none;">Create your account</a></p>
+    `)
+  };
+}

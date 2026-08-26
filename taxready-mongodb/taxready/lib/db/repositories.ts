@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 import { getDb } from "./mongodb";
-import { Business, Transaction, Receipt, Report, Member } from "@/types";
-import { DEMO_BUSINESS } from "@/lib/data/demo-data";
+import { Business, Transaction, Receipt, Report, Member, AccountantClient } from "@/types";
+import { NEW_BUSINESS_DEFAULTS } from "@/lib/data/defaults";
 
 /**
  * Every function here scopes reads/writes by businessId, and every
@@ -34,9 +34,9 @@ export async function getOrCreateBusinessForUser(userId: string, email: string):
   const insertResult = await businesses.insertOne({
     ownerId: userId,
     name: "My Business",
-    type: DEMO_BUSINESS.type,
-    country: DEMO_BUSINESS.country,
-    currency: DEMO_BUSINESS.currency,
+    type: NEW_BUSINESS_DEFAULTS.type,
+    country: NEW_BUSINESS_DEFAULTS.country,
+    currency: NEW_BUSINESS_DEFAULTS.currency,
     createdAt: now
   });
 
@@ -53,9 +53,9 @@ export async function getOrCreateBusinessForUser(userId: string, email: string):
     id: String(insertResult.insertedId),
     ownerId: userId,
     name: "My Business",
-    type: DEMO_BUSINESS.type,
-    country: DEMO_BUSINESS.country,
-    currency: DEMO_BUSINESS.currency,
+    type: NEW_BUSINESS_DEFAULTS.type,
+    country: NEW_BUSINESS_DEFAULTS.country,
+    currency: NEW_BUSINESS_DEFAULTS.currency,
     createdAt: now
   };
 }
@@ -121,4 +121,38 @@ export async function listMembers(businessId: string): Promise<Member[]> {
   const db = await getDb();
   const docs = await db.collection("members").find({ businessId }).toArray();
   return docs.map((d) => withId<Member>(d));
+}
+
+// Accountant Dashboard (/dashboard/accountant) — a separate workspace for
+// accountants tracking multiple client businesses. Deliberately its own
+// simple collection rather than reusing `members`/`businesses`: an
+// accountant's client here is a bookkeeping status they're tracking, not
+// necessarily a business the accountant has been granted access into (no
+// invite-acceptance flow exists yet — see the note on inviteAccountantClient).
+export async function listAccountantClients(accountantUserId: string): Promise<AccountantClient[]> {
+  const db = await getDb();
+  const docs = await db
+    .collection("accountant_clients")
+    .find({ accountantUserId })
+    .sort({ invitedAt: -1 })
+    .toArray();
+  return docs.map((d) => withId<AccountantClient>(d));
+}
+
+export async function inviteAccountantClient(
+  accountantUserId: string,
+  name: string,
+  email: string
+): Promise<AccountantClient> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  // New clients start as "Missing records" — genuinely true, since no
+  // transactions/receipts exist for them yet. This is NOT the invite
+  // being accepted/linked to the client's own account (that would need a
+  // token-based accept flow, similar to email verification, joining this
+  // record to the client's business once they sign up) — for now it's a
+  // status the accountant tracks manually until that's built.
+  const doc = { accountantUserId, name, email, status: "Missing records" as const, invitedAt: now };
+  const result = await db.collection("accountant_clients").insertOne(doc);
+  return { id: String(result.insertedId), ...doc };
 }

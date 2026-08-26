@@ -129,6 +129,17 @@ export interface Member {
   status: "active" | "invited";
 }
 
+export type AccountantClientStatus = "Ready for review" | "Needs attention" | "Missing records";
+
+export interface AccountantClient {
+  id: string;
+  accountantUserId: string;
+  name: string;
+  email: string;
+  status: AccountantClientStatus;
+  invitedAt: string;
+}
+
 export interface ClassificationResult {
   category: string;
   subcategory?: string;
