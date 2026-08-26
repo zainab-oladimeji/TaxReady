@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { captureError } from "@/lib/monitoring";
 import { z } from "zod";
 import { getAIProvider } from "@/lib/ai";
 
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     const extraction = await provider.extractReceipt(parsed.data);
     return NextResponse.json(extraction);
   } catch (err) {
-    console.error("[api/receipts/process] failed", err);
+    captureError("[api/receipts/process] failed", err);
     return NextResponse.json({ error: "We couldn't process this receipt. Try again or enter it manually." }, { status: 500 });
   }
 }

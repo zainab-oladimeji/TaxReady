@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { captureError } from "@/lib/monitoring";
 import { z } from "zod";
 import { getAIProvider } from "@/lib/ai";
 import { getCountryTaxConfig } from "@/lib/tax/country-rules";
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
     const results = await provider.classifyTransactionsBatch(parsed.data.transactions, taxConfig);
     return NextResponse.json({ results });
   } catch (err) {
-    console.error("[api/ai/classify-batch] failed", err);
+    captureError("[api/ai/classify-batch] failed", err);
     return NextResponse.json({ error: "Classification failed. Please try again." }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { captureError } from "@/lib/monitoring";
 import { z } from "zod";
 import { getAIProvider } from "@/lib/ai";
 import { Transaction, Receipt } from "@/types";
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
     const summary = await provider.summarizePeriod({ businessId, transactions, receipts }, periodLabel);
     return NextResponse.json(summary);
   } catch (err) {
-    console.error("[api/reports/generate] failed", err);
+    captureError("[api/reports/generate] failed", err);
     return NextResponse.json({ error: "Report generation failed." }, { status: 500 });
   }
 }

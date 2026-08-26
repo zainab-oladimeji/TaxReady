@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { captureError } from "@/lib/monitoring";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { getAIProvider } from "@/lib/ai";
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(response);
   } catch (err) {
-    console.error("[api/ai/ask] failed", err);
+    captureError("[api/ai/ask] failed", err);
     return NextResponse.json({ error: "The assistant couldn't process that just now." }, { status: 500 });
   }
 }
