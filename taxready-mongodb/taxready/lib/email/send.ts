@@ -31,6 +31,7 @@ interface SendEmailInput {
   to: string;
   subject: string;
   html: string;
+  text?: string;
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<{ sent: boolean }> {
@@ -50,7 +51,13 @@ export async function sendEmail(input: SendEmailInput): Promise<{ sent: boolean 
     from,
     to: input.to,
     subject: input.subject,
-    html: input.html
+    html: input.html,
+    // Sending a plain-text alternative alongside HTML makes the message a
+    // proper multipart email — spam filters treat HTML-only sends (especially
+    // ones that are mostly a single button, which every email here used to
+    // be) as a strong spam signal, particularly from a domain with no
+    // sending history yet. See lib/email/templates.ts.
+    text: input.text
   });
 
   if (error) {
