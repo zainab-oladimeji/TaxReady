@@ -36,9 +36,9 @@ export async function POST(req: NextRequest) {
 
     const token = await createAuthToken(user.id, "email-verify");
     const link = `${appBaseUrl()}/api/auth/verify-email?token=${token}`;
-    await sendEmail({ to: user.email, ...verificationEmail(link) });
+    const { sent } = await sendEmail({ to: user.email, ...verificationEmail(link) });
 
-    return NextResponse.json({ id: user.id, email: user.email, verificationRequired: true });
+    return NextResponse.json({ id: user.id, email: user.email, verificationRequired: true, emailSent: sent });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not create account.";
     return NextResponse.json({ error: message }, { status: 400 });

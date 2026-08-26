@@ -14,6 +14,7 @@ export default function SignUpPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
+  const [emailDeliveryFailed, setEmailDeliveryFailed] = useState(false);
 
   async function handleGoogle() {
     setLoading(true);
@@ -32,8 +33,9 @@ export default function SignUpPage() {
     setLoading(true);
     setError(null);
     try {
-      await signUpWithEmail(email, password, name);
+      const { emailSent } = await signUpWithEmail(email, password, name);
       setSubmittedEmail(email);
+      setEmailDeliveryFailed(!emailSent);
     } catch (err) {
       setError(err instanceof Error ? err.message : "We couldn't create your account with those details.");
     } finally {
@@ -51,6 +53,12 @@ export default function SignUpPage() {
             Click it to activate your account, then come back and sign in.
           </p>
         </div>
+        {emailDeliveryFailed && (
+          <p className="mt-2 rounded-lg bg-alert/10 px-3 py-2 text-center text-xs text-alert">
+            Your account was created, but we couldn&apos;t deliver the email just now. Contact support if it
+            doesn&apos;t arrive shortly.
+          </p>
+        )}
         <p className="mt-4 text-center text-sm">
           <Link href="/auth/sign-in" className="font-medium text-ink hover:underline">
             Back to sign in

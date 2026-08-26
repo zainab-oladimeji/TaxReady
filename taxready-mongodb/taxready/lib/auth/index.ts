@@ -33,7 +33,7 @@ export async function signInWithEmail(email: string, password: string): Promise<
   }
 }
 
-export async function signUpWithEmail(email: string, password: string, name: string): Promise<void> {
+export async function signUpWithEmail(email: string, password: string, name: string): Promise<{ emailSent: boolean }> {
   const res = await fetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -43,9 +43,11 @@ export async function signUpWithEmail(email: string, password: string, name: str
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error ?? "We couldn't create your account.");
   }
+  const data = await res.json();
   // No auto sign-in anymore — the account needs email verification first
   // (see /api/auth/register and /api/auth/verify-email). The sign-up page
   // shows a "check your email" state instead of redirecting to /dashboard.
+  return { emailSent: Boolean(data.emailSent) };
 }
 
 export async function resendVerificationEmail(email: string): Promise<void> {
