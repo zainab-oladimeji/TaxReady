@@ -20,6 +20,20 @@ export async function getOrCreateBusinessForUser(userId: string, email: string):
   const db = await getDb();
   const businesses = db.collection("businesses");
   const members = db.collection("members");
+  const users = db.collection("users");
+
+  // Respect the user's chosen active business (see setActiveBusinessForUser)
+  // if they have more than one and it's still valid — falls back to "first
+  // membership found" below for the common single-business case, so this
+  // never changes behavior for anyone who's never touched multi-business.
+  const userDoc = await users.findOne({ _id: new ObjectId(userId) });
+  if (userDoc?.activeBusinessId) {
+    const activeMembership = await members.findOne({ userId, businessId: userDoc.activeBusinessId });
+    if (activeMembership) {
+      const biz = await businesses.findOne({ _id: new ObjectId(userDoc.activeBusinessId) });
+      if (biz) return withId<Business>(biz);
+    }
+  }
 
   const membership = await members.findOne({ userId });
   if (membership) {
@@ -155,4 +169,65 @@ export async function inviteAccountantClient(
   const doc = { accountantUserId, name, email, status: "Missing records" as const, invitedAt: now };
   const result = await db.collection("accountant_clients").insertOne(doc);
   return { id: String(result.insertedId), ...doc };
+}
+
+// Multi-business support (/dashboard/businesses). A user can be a member
+// of more than one business (e.g. they run two separate SMEs); which one
+// is "active" — the one every other route (transactions, receipts,
+// reports, AI) operates on — is stored on the user document and read by
+// getOrCreateBusinessForUser above. Switching business never deletes or
+// touches data in the business being switched away from.
+
+export async function listBusinessesForUser(userId: string): Promise<Business[]> {
+  const db = await getDb();
+  const memberships = await db.collection("members").find({ userId }).toArray();
+  if (memberships.length === 0) return [];
+  const businessIds = memberships.map((m) => new ObjectId(m.businessId));
+  const docs = await db.collection("businesses").find({ _id: { $in: businessIds } }).toArray();
+  return docs.map((d) => withId<Business>(d));
+}
+
+export async function createAdditionalBusinessForUser(
+  userId: string,
+  email: string,
+  fields: { name: string; type: Business["type"]; country: Business["country"]; currency: string }
+): Promise<Business> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const insertResult = await db.collection("businesses").insertOne({
+    ownerId: userId,
+    name: fields.name,
+    type: fields.type,
+    country: fields.country,
+    currency: fields.currency,
+    createdAt: now
+  });
+  await db.collection("members").insertOne({
+    businessId: String(insertResult.insertedId),
+    userId,
+    role: "owner",
+    email,
+    invitedAt: now,
+    status: "active"
+  });
+  return {
+    id: String(insertResult.insertedId),
+    ownerId: userId,
+    name: fields.name,
+    type: fields.type,
+    country: fields.country,
+    currency: fields.currency,
+    createdAt: now
+  };
+}
+
+export async function setActiveBusinessForUser(userId: string, businessId: string): Promise<boolean> {
+  const db = await getDb();
+  // Only allow switching to a business the user is actually a member of —
+  // otherwise a manipulated businessId could redirect someone else's data
+  // into view.
+  const membership = await db.collection("members").findOne({ userId, businessId });
+  if (!membership) return false;
+  await db.collection("users").updateOne({ _id: new ObjectId(userId) }, { $set: { activeBusinessId: businessId } });
+  return true;
 }
