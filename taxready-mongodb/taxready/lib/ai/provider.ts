@@ -19,7 +19,7 @@ import { CountryTaxConfig } from "@/types";
  * always go through getAIProvider() in lib/ai/index.ts.
  */
 export interface AIProvider {
-  readonly name: "gemini" | "mock";
+  readonly name: "gemini" | "groq" | "mock";
 
   classifyTransaction(
     transaction: Pick<Transaction, "description" | "amount" | "type" | "currency" | "merchant">,

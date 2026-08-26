@@ -14,18 +14,29 @@ let cached: AIProvider | null = null;
  * mock/demo mode.
  *
  * Preference order:
- *   1. GEMINI_API_KEY set -> GeminiApiKeyProvider (plain Gemini API, works
- *      anywhere including Vercel — no service-account credentials needed).
- *   2. VERTEX_AI_PROJECT_ID + GOOGLE_CLOUD_PROJECT_ID set -> GeminiAIProvider
+ *   1. GROQ_API_KEY set -> GroqProvider (free, no credit card required —
+ *      good default if Google Cloud billing isn't set up, e.g. a declined
+ *      card. See lib/ai/groq-provider.ts).
+ *   2. GEMINI_API_KEY set -> GeminiApiKeyProvider (plain Gemini API, works
+ *      anywhere including Vercel — no service-account credentials needed,
+ *      but the free tier is capped at 20 requests/day; needs Google Cloud
+ *      billing linked for real usage).
+ *   3. VERTEX_AI_PROJECT_ID + GOOGLE_CLOUD_PROJECT_ID set -> GeminiAIProvider
  *      (Vertex AI via Application Default Credentials — only works on a
  *      host that provides ADC, e.g. Cloud Run. Vercel does NOT provide
  *      this automatically, so this path silently fails over to mock
  *      unless you've explicitly wired a service account.)
- *   3. Neither set -> MockAIProvider (offline, deterministic, demo-only —
+ *   4. None set -> MockAIProvider (offline, deterministic, demo-only —
  *      does not actually read receipt content).
  */
 export async function getAIProvider(): Promise<AIProvider> {
   if (cached) return cached;
+
+  if (process.env.GROQ_API_KEY) {
+    const { GroqProvider } = await import("./groq-provider");
+    cached = new GroqProvider();
+    return cached;
+  }
 
   if (process.env.GEMINI_API_KEY) {
     const { GeminiApiKeyProvider } = await import("./gemini-api-provider");
