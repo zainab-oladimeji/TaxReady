@@ -126,9 +126,9 @@ export function SecuritySection() {
 }
 
 const FOOTER_COLUMNS = [
-  { title: "Product", links: ["Product", "How It Works", "AI", "Pricing"] },
-  { title: "Audience", links: ["For SMEs", "For Accountants"] },
-  { title: "Company", links: ["Security", "About"] }
+  { title: "Product", links: [{ label: "Product", href: "#solution" }, { label: "How It Works", href: "#ai" }, { label: "AI", href: "#ai" }, { label: "Pricing", href: "#pricing" }] },
+  { title: "Audience", links: [{ label: "For SMEs", href: "#problem" }, { label: "For Accountants", href: "#accountants" }] },
+  { title: "Legal", links: [{ label: "Privacy Policy", href: "/privacy" }, { label: "Terms of Service", href: "/terms" }, { label: "Security", href: "#security" }] }
 ];
 
 export function Footer() {
@@ -145,9 +145,9 @@ export function Footer() {
               <p className="text-xs font-medium uppercase tracking-wide text-paper/45">{col.title}</p>
               <ul className="mt-3 space-y-2 text-sm">
                 {col.links.map((l) => (
-                  <li key={l}>
-                    <Link href="#" className="hover:text-paper">
-                      {l}
+                  <li key={l.label}>
+                    <Link href={l.href} className="hover:text-paper">
+                      {l.label}
                     </Link>
                   </li>
                 ))}
