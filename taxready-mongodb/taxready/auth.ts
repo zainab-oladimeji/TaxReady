@@ -1,8 +1,21 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import type { Provider } from "next-auth/providers";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { findUserByEmail, verifyPassword, upsertOAuthUser } from "@/lib/auth/users";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+
+// Auth.js v5's documented pattern for surfacing a specific reason to the
+// client: subclass CredentialsSignin and set `code` — that code (not the
+// message) is what result.error contains on the client, since arbitrary
+// thrown-error messages are deliberately not exposed (to avoid leaking
+// details like "no account with that email" vs "wrong password").
+class EmailNotVerifiedError extends CredentialsSignin {
+  code = "email_not_verified";
+}
+class TooManyAttemptsError extends CredentialsSignin {
+  code = "too_many_attempts";
+}
 
 const providers: Provider[] = [
   Credentials({
@@ -11,16 +24,29 @@ const providers: Provider[] = [
       email: { label: "Email", type: "email" },
       password: { label: "Password", type: "password" }
     },
-    async authorize(credentials) {
+    async authorize(credentials, request) {
       const email = credentials?.email as string | undefined;
       const password = credentials?.password as string | undefined;
       if (!email || !password) return null;
+
+      // Rate limit by IP + the email being attempted, so this blunts both
+      // "many passwords against one account" and "many accounts from one
+      // IP" credential-stuffing patterns without locking out everyone
+      // behind a shared/NAT IP after a few unrelated failed logins.
+      const ip = getClientIp(request);
+      if (!checkRateLimit(`sign-in:${ip}:${email.toLowerCase()}`, 8, 15 * 60 * 1000)) {
+        throw new TooManyAttemptsError();
+      }
 
       const user = await findUserByEmail(email);
       if (!user || !user.passwordHash) return null;
 
       const valid = await verifyPassword(password, user.passwordHash);
       if (!valid) return null;
+
+      if (!user.emailVerified) {
+        throw new EmailNotVerifiedError();
+      }
 
       return { id: user.id, email: user.email, name: user.name };
     }

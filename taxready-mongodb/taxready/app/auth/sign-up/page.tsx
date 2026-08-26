@@ -1,20 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AuthShell } from "@/components/marketing/auth-shell";
 import { Button } from "@/components/ui/button";
 import { signUpWithEmail, signInWithGoogle } from "@/lib/auth";
-import { Chrome } from "lucide-react";
+import { Chrome, MailCheck } from "lucide-react";
 
 export default function SignUpPage() {
-  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [submittedEmail, setSubmittedEmail] = useState<string | null>(null);
 
   async function handleGoogle() {
     setLoading(true);
@@ -34,12 +33,31 @@ export default function SignUpPage() {
     setError(null);
     try {
       await signUpWithEmail(email, password, name);
-      router.push("/dashboard");
+      setSubmittedEmail(email);
     } catch (err) {
       setError(err instanceof Error ? err.message : "We couldn't create your account with those details.");
     } finally {
       setLoading(false);
     }
+  }
+
+  if (submittedEmail) {
+    return (
+      <AuthShell title="Check your email" subtitle="One more step before your account is ready.">
+        <div className="flex flex-col items-center gap-3 py-4 text-center">
+          <MailCheck size={32} className="text-brand-600" />
+          <p className="text-sm text-ink/70">
+            We sent a verification link to <span className="font-medium text-ink">{submittedEmail}</span>.
+            Click it to activate your account, then come back and sign in.
+          </p>
+        </div>
+        <p className="mt-4 text-center text-sm">
+          <Link href="/auth/sign-in" className="font-medium text-ink hover:underline">
+            Back to sign in
+          </Link>
+        </p>
+      </AuthShell>
+    );
   }
 
   return (

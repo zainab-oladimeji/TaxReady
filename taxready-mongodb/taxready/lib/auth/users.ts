@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db/mongodb";
 
 export interface UserRecord {
@@ -6,6 +7,7 @@ export interface UserRecord {
   email: string;
   name: string;
   passwordHash?: string;
+  emailVerified?: boolean;
 }
 
 /**
@@ -21,7 +23,26 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
   const db = await getDb();
   const doc = await db.collection("users").findOne({ email: email.toLowerCase() });
   if (!doc) return null;
-  return { id: String(doc._id), email: doc.email, name: doc.name, passwordHash: doc.passwordHash };
+  return {
+    id: String(doc._id),
+    email: doc.email,
+    name: doc.name,
+    passwordHash: doc.passwordHash,
+    emailVerified: Boolean(doc.emailVerified)
+  };
+}
+
+export async function findUserById(id: string): Promise<UserRecord | null> {
+  const db = await getDb();
+  const doc = await db.collection("users").findOne({ _id: new ObjectId(id) });
+  if (!doc) return null;
+  return {
+    id: String(doc._id),
+    email: doc.email,
+    name: doc.name,
+    passwordHash: doc.passwordHash,
+    emailVerified: Boolean(doc.emailVerified)
+  };
 }
 
 export async function createUserWithPassword(email: string, password: string, name: string): Promise<UserRecord> {
@@ -36,16 +57,30 @@ export async function createUserWithPassword(email: string, password: string, na
     email: email.toLowerCase(),
     name,
     passwordHash,
+    emailVerified: false,
     createdAt: now
   });
-  return { id: String(result.insertedId), email: email.toLowerCase(), name };
+  return { id: String(result.insertedId), email: email.toLowerCase(), name, emailVerified: false };
+}
+
+export async function markEmailVerified(userId: string): Promise<void> {
+  const db = await getDb();
+  await db.collection("users").updateOne({ _id: new ObjectId(userId) }, { $set: { emailVerified: true } });
+}
+
+export async function updatePasswordHash(userId: string, newPassword: string): Promise<void> {
+  const db = await getDb();
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await db.collection("users").updateOne({ _id: new ObjectId(userId) }, { $set: { passwordHash } });
 }
 
 export async function upsertOAuthUser(email: string, name: string): Promise<void> {
   const db = await getDb();
+  // Google-verified emails are trustworthy without our own verification
+  // step, so OAuth sign-ins are marked verified on creation.
   await db.collection("users").updateOne(
     { email: email.toLowerCase() },
-    { $setOnInsert: { email: email.toLowerCase(), name, createdAt: new Date().toISOString() } },
+    { $setOnInsert: { email: email.toLowerCase(), name, emailVerified: true, createdAt: new Date().toISOString() } },
     { upsert: true }
   );
 }
