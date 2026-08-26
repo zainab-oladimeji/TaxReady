@@ -26,6 +26,15 @@ interface DataContextValue {
   readiness: ReturnType<typeof calculateReadiness>;
   importTransactions: (rows: { date: string; description: string; amount: number; type: "income" | "expense" }[]) => Promise<void>;
   uploadReceipt: (fileName: string, mimeType: string, base64: string) => Promise<Receipt>;
+  addManualReceipt: (fields: {
+    merchant?: string;
+    date?: string;
+    amount?: number;
+    vatAmount?: number;
+    currency?: string;
+    category?: string;
+    paymentMethod?: string;
+  }) => Promise<Receipt>;
   updateTransactionCategory: (id: string, category: string, status: Transaction["status"]) => void;
   isProcessing: boolean;
   isLive: boolean;
@@ -146,6 +155,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         });
         const data = await res.json();
 
+        if (!res.ok) {
+          // Previously this branch didn't exist — a failed request's
+          // {error: "..."} body was treated as if it were a successful
+          // extraction, silently rendering a receipt with every field
+          // blank instead of surfacing what actually went wrong.
+          throw new Error(data.error ?? "We couldn't process this receipt.");
+        }
+
         if (isLive) {
           // /api/receipts returns an already-persisted Receipt document.
           setReceipts((prev) => [data, ...prev]);
@@ -178,6 +195,45 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     [isLive]
   );
 
+  const addManualReceipt = useCallback(
+    async (fields: {
+      merchant?: string;
+      date?: string;
+      amount?: number;
+      vatAmount?: number;
+      currency?: string;
+      category?: string;
+      paymentMethod?: string;
+    }): Promise<Receipt> => {
+      // The manual-entry fallback (see UploadReceiptModal) when AI
+      // extraction fails or the person just wants to type it themselves.
+      if (isLive) {
+        const res = await fetch("/api/receipts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileName: "Manual entry", manual: true, manualFields: fields })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "We couldn't save this receipt.");
+        setReceipts((prev) => [data, ...prev]);
+        return data as Receipt;
+      }
+
+      // Demo mode: no server round-trip needed, this is in-memory only.
+      const receipt: Receipt = {
+        id: `rcpt-${Date.now()}`,
+        businessId: DEMO_BUSINESS.id,
+        fileName: "Manual entry",
+        ...fields,
+        status: "needs_review",
+        createdAt: new Date().toISOString()
+      };
+      setReceipts((prev) => [receipt, ...prev]);
+      return receipt;
+    },
+    [isLive]
+  );
+
   const updateTransactionCategory = useCallback(
     (id: string, category: string, status: Transaction["status"]) => {
       setTransactions((prev) => prev.map((t) => (t.id === id ? { ...t, category, status, updatedAt: new Date().toISOString() } : t)));
@@ -205,6 +261,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     readiness,
     importTransactions,
     uploadReceipt,
+    addManualReceipt,
     updateTransactionCategory,
     isProcessing,
     isLive,
