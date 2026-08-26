@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (user && user.passwordHash && !user.emailVerified) {
     const token = await createAuthToken(user.id, "email-verify");
     const link = `${appBaseUrl()}/api/auth/verify-email?token=${token}`;
-    await sendEmail({ to: user.email, ...verificationEmail(link) });
+    await sendEmail({ to: user.email, ...verificationEmail(link, user.name) });
   }
 
   return NextResponse.json({ ok: true });

@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (user && user.passwordHash) {
     const token = await createAuthToken(user.id, "password-reset");
     const link = `${appBaseUrl()}/auth/reset-password?token=${token}`;
-    await sendEmail({ to: user.email, ...passwordResetEmail(link) });
+    await sendEmail({ to: user.email, ...passwordResetEmail(link, user.name) });
   }
 
   return NextResponse.json({ ok: true });
