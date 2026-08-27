@@ -19,6 +19,8 @@ export async function GET() {
   return NextResponse.json({ business, transactions });
 }
 
+// Kept in sync with IMPORT_ROW_CAP in components/dashboard/import-csv-modal.tsx —
+// that's the client-side ceiling for a single synchronous import request.
 const importSchema = z.object({
   rows: z.array(
     z.object({
@@ -27,7 +29,7 @@ const importSchema = z.object({
       amount: z.number(),
       type: z.enum(["income", "expense"])
     })
-  ).max(200)
+  ).max(500)
 });
 
 export async function POST(req: NextRequest) {

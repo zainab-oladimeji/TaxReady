@@ -24,7 +24,10 @@ interface DataContextValue {
   transactions: Transaction[];
   receipts: Receipt[];
   readiness: ReturnType<typeof calculateReadiness>;
-  importTransactions: (rows: { date: string; description: string; amount: number; type: "income" | "expense" }[]) => Promise<void>;
+  importTransactions: (
+    rows: { date: string; description: string; amount: number; type: "income" | "expense" }[],
+    fileName?: string
+  ) => Promise<void>;
   uploadReceipt: (fileName: string, mimeType: string, base64: string) => Promise<Receipt>;
   addManualReceipt: (fields: {
     merchant?: string;
@@ -37,6 +40,10 @@ interface DataContextValue {
   }) => Promise<Receipt>;
   updateTransactionCategory: (id: string, category: string, status: Transaction["status"]) => void;
   isProcessing: boolean;
+  // Only populated during a background import (see importTransactions) —
+  // null the rest of the time, including during the old-style synchronous
+  // import fallback, which has no meaningful "in progress" count to show.
+  importProgress: { total: number; processed: number } | null;
   isLive: boolean;
   isLoading: boolean;
 }
@@ -51,6 +58,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [transactions, setTransactions] = useState<Transaction[]>(DEMO_TRANSACTIONS);
   const [receipts, setReceipts] = useState<Receipt[]>(DEMO_RECEIPTS);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ total: number; processed: number } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -83,18 +91,80 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isLive, session?.user]);
 
+  const refreshTransactions = useCallback(async () => {
+    const res = await fetch("/api/transactions");
+    const data = await res.json();
+    setTransactions(data.transactions ?? []);
+  }, []);
+
   const importTransactions = useCallback(
-    async (rows: { date: string; description: string; amount: number; type: "income" | "expense" }[]) => {
+    async (
+      rows: { date: string; description: string; amount: number; type: "income" | "expense" }[],
+      fileName?: string
+    ) => {
       setIsProcessing(true);
+      setImportProgress(null);
       try {
         if (isLive) {
-          const res = await fetch("/api/transactions", {
+          // Background import: saves rows instantly and classifies them
+          // via a queue (see app/api/transactions/import + lib/jobs/qstash.ts)
+          // so imports of any size don't block on one long request.
+          const startRes = await fetch("/api/transactions/import", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ rows })
+            body: JSON.stringify({ rows, fileName: fileName ?? "import.csv" })
           });
-          const data = await res.json();
-          setTransactions((prev) => [...(data.transactions ?? []), ...prev]);
+
+          if (startRes.status === 503) {
+            // Background processing isn't configured on this deployment
+            // (QSTASH_TOKEN missing) — fall back to the original
+            // synchronous import so smaller imports still work.
+            const res = await fetch("/api/transactions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ rows })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error ?? "Import failed.");
+            setTransactions((prev) => [...(data.transactions ?? []), ...prev]);
+            return;
+          }
+
+          const startData = await startRes.json();
+          if (!startRes.ok && startRes.status !== 207) {
+            throw new Error(startData.error ?? "We couldn't start this import.");
+          }
+          const jobId: string = startData.jobId;
+
+          setImportProgress({ total: startData.totalRows, processed: 0 });
+          // The rows already exist (status "queued") — show them right
+          // away instead of leaving the list empty while classification
+          // runs in the background.
+          await refreshTransactions();
+
+          await new Promise<void>((resolve) => {
+            const poll = async () => {
+              const statusRes = await fetch(`/api/transactions/import/${jobId}`);
+              if (!statusRes.ok) {
+                resolve();
+                return;
+              }
+              const { job } = await statusRes.json();
+              if (!job) {
+                resolve();
+                return;
+              }
+              setImportProgress({ total: job.totalRows, processed: job.processedRows });
+              if (job.status === "completed" || job.status === "failed") {
+                resolve();
+                return;
+              }
+              setTimeout(poll, 1500);
+            };
+            poll();
+          });
+
+          await refreshTransactions();
           return;
         }
 
@@ -138,9 +208,10 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setTransactions((prev) => [...classified, ...prev]);
       } finally {
         setIsProcessing(false);
+        setImportProgress(null);
       }
     },
-    [isLive]
+    [isLive, refreshTransactions]
   );
 
   const uploadReceipt = useCallback(
@@ -264,6 +335,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     addManualReceipt,
     updateTransactionCategory,
     isProcessing,
+    importProgress,
     isLive,
     isLoading
   };

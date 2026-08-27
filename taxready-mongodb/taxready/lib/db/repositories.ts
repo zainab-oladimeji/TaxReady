@@ -1,6 +1,6 @@
 import { ObjectId } from "mongodb";
 import { getDb } from "./mongodb";
-import { Business, Transaction, Receipt, Report, Member, AccountantClient } from "@/types";
+import { Business, Transaction, Receipt, Report, Member, AccountantClient, ImportJob } from "@/types";
 import { NEW_BUSINESS_DEFAULTS } from "@/lib/data/defaults";
 
 /**
@@ -96,13 +96,97 @@ export async function insertTransactions(businessId: string, transactions: Omit<
 export async function updateTransaction(
   businessId: string,
   transactionId: string,
-  updates: Partial<Pick<Transaction, "category" | "status" | "subcategory">>
+  updates: Partial<
+    Pick<Transaction, "category" | "status" | "subcategory" | "taxRelevance" | "aiConfidence" | "aiReason">
+  >
 ): Promise<void> {
   const db = await getDb();
   await db.collection("transactions").updateOne(
     { _id: new ObjectId(transactionId), businessId },
     { $set: { ...updates, updatedAt: new Date().toISOString() } }
   );
+}
+
+// Background import pipeline (app/api/transactions/import, app/api/jobs/classify-chunk).
+// getBusinessById has no membership check, unlike everything else in this
+// file — it's called only from the QStash-signed background worker, which
+// runs with no user session at all (see SECURITY.md's note on this route).
+export async function getBusinessById(businessId: string): Promise<Business | null> {
+  const db = await getDb();
+  const doc = await db.collection("businesses").findOne({ _id: new ObjectId(businessId) });
+  return doc ? withId<Business>(doc) : null;
+}
+
+export async function createImportJob(businessId: string, fileName: string, totalRows: number): Promise<ImportJob> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const doc = {
+    businessId,
+    fileName,
+    totalRows,
+    processedRows: 0,
+    reviewRows: 0,
+    status: "processing" as const,
+    createdAt: now,
+    updatedAt: now
+  };
+  const result = await db.collection("import_jobs").insertOne(doc);
+  return { id: String(result.insertedId), ...doc };
+}
+
+export async function getImportJob(businessId: string, jobId: string): Promise<ImportJob | null> {
+  const db = await getDb();
+  const doc = await db.collection("import_jobs").findOne({ _id: new ObjectId(jobId), businessId });
+  return doc ? withId<ImportJob>(doc) : null;
+}
+
+// Atomic — many chunk workers can report progress on the same job
+// concurrently, so this must be a single $inc, never a read-modify-write.
+export async function advanceImportJob(
+  jobId: string,
+  processedDelta: number,
+  reviewDelta: number
+): Promise<ImportJob | null> {
+  const db = await getDb();
+  const result = await db.collection("import_jobs").findOneAndUpdate(
+    { _id: new ObjectId(jobId) },
+    { $inc: { processedRows: processedDelta, reviewRows: reviewDelta }, $set: { updatedAt: new Date().toISOString() } },
+    { returnDocument: "after" }
+  );
+  const doc = result && "value" in result ? result.value : result;
+  if (!doc) return null;
+  const job = withId<ImportJob>(doc);
+  if (job.status === "processing" && job.processedRows >= job.totalRows) {
+    await db
+      .collection("import_jobs")
+      .updateOne({ _id: new ObjectId(jobId) }, { $set: { status: "completed", updatedAt: new Date().toISOString() } });
+    job.status = "completed";
+  }
+  return job;
+}
+
+// Inserted immediately on upload with status "queued" and a placeholder
+// category, so the row exists (and the upload response is instant) before
+// any AI classification has run. Chunk workers fill in the real category
+// via updateTransaction once classified.
+export async function insertQueuedTransactions(
+  businessId: string,
+  importJobId: string,
+  rows: { date: string; description: string; amount: number; currency: string; type: Transaction["type"] }[]
+): Promise<Transaction[]> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const docs = rows.map((row) => ({
+    ...row,
+    businessId,
+    importJobId,
+    category: "Uncategorized",
+    status: "queued" as const,
+    createdAt: now,
+    updatedAt: now
+  }));
+  const result = await db.collection("transactions").insertMany(docs);
+  return docs.map((d, i) => ({ id: String(result.insertedIds[i]), ...d }) as Transaction);
 }
 
 export async function listReceipts(businessId: string): Promise<Receipt[]> {

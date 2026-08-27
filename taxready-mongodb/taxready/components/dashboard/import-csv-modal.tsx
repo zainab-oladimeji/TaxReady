@@ -14,8 +14,15 @@ interface CsvRow {
   type: string;
 }
 
+// Classification is now chunked + retried server-side (see
+// lib/ai/robust-batch.ts), and a signed-in import runs as a background
+// job (see app/api/transactions/import) rather than one long request, so
+// this is no longer capped at a tiny "demo" size. It still needs a
+// ceiling for sanity/UX reasons — this matches the backend's own cap.
+const IMPORT_ROW_CAP = 5000;
+
 export function ImportCsvModal({ onClose }: { onClose: () => void }) {
-  const { importTransactions, isProcessing } = useTaxReadyData();
+  const { importTransactions, isProcessing, importProgress } = useTaxReadyData();
   const [rows, setRows] = useState<CsvRow[] | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +40,13 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
           setError("We couldn't find valid rows. Expect columns: date, description, amount, type.");
           return;
         }
-        setRows(valid.slice(0, 50)); // cap for the demo so classification stays snappy
+        if (valid.length > IMPORT_ROW_CAP) {
+          setError(
+            `This file has ${valid.length} rows — imports are currently limited to ${IMPORT_ROW_CAP} at a time. ` +
+              `We're importing the first ${IMPORT_ROW_CAP}; split the rest into a separate file and import it next.`
+          );
+        }
+        setRows(valid.slice(0, IMPORT_ROW_CAP));
       }
     });
   }
@@ -48,7 +61,8 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
         type: (r.type?.toUpperCase() === "CREDIT" || r.type?.toLowerCase() === "income" ? "income" : "expense") as
           | "income"
           | "expense"
-      }))
+      })),
+      fileName
     );
     setDone(true);
   }
@@ -76,6 +90,7 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
             <p className="text-sm text-ink/65">
               {fileName} — {rows.length} rows ready to import.
             </p>
+            {error && <p className="mt-2 text-xs text-alert">{error}</p>}
             <div className="mt-3 max-h-48 overflow-y-auto rounded-lg border border-line">
               <table className="w-full text-xs">
                 <thead className="bg-sand text-left text-ink/50">
@@ -97,8 +112,25 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
               </table>
             </div>
             <Button className="mt-4 w-full" onClick={handleImport} disabled={isProcessing}>
-              {isProcessing ? `Processing ${rows.length} transactions with AI...` : `Classify & import ${rows.length} transactions`}
+              {isProcessing
+                ? importProgress
+                  ? `Classifying ${importProgress.processed} of ${importProgress.total}...`
+                  : "Starting import..."
+                : `Classify & import ${rows.length} transactions`}
             </Button>
+            {isProcessing && importProgress && importProgress.total > 0 && (
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-sand">
+                <div
+                  className="h-full rounded-full bg-brand-500 transition-all duration-300"
+                  style={{ width: `${Math.min(100, (importProgress.processed / importProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            {isProcessing && (
+              <p className="mt-2 text-center text-xs text-ink/45">
+                You can close this and keep using TaxReady — the import finishes in the background.
+              </p>
+            )}
           </div>
         ) : (
           <>

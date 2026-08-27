@@ -4,7 +4,7 @@
 
 export type TransactionType = "income" | "expense";
 
-export type TransactionStatus = "pending" | "reviewed" | "flagged";
+export type TransactionStatus = "pending" | "reviewed" | "flagged" | "queued";
 
 export type TaxRelevance =
   | "vat_related"
@@ -29,7 +29,25 @@ export interface Transaction {
   aiConfidence?: number; // 0-1
   aiReason?: string;
   receiptId?: string;
+  importJobId?: string;
   status: TransactionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Bulk CSV imports (see app/api/transactions/import) are processed in the
+// background — a job doc tracks progress so the frontend can poll and show
+// "342 of 1,418 processed" instead of blocking on one long request.
+export type ImportJobStatus = "processing" | "completed" | "failed";
+
+export interface ImportJob {
+  id: string;
+  businessId: string;
+  fileName: string;
+  totalRows: number;
+  processedRows: number;
+  reviewRows: number; // rows that finished but need manual review (see robust-batch.ts fallback)
+  status: ImportJobStatus;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,4 +1,5 @@
 import { AIProvider, COMPLIANCE_DISCLAIMER } from "./provider";
+import { classifyInRobustBatches, ClassifiableTxn } from "./robust-batch";
 import {
   Anomaly,
   ClassificationResult,
@@ -80,6 +81,19 @@ export class GroqProvider implements AIProvider {
 
   async classifyTransactionsBatch(
     transactions: Pick<Transaction, "description" | "amount" | "type" | "currency" | "merchant">[],
+    taxConfig: CountryTaxConfig
+  ): Promise<ClassificationResult[]> {
+    return classifyInRobustBatches(transactions, (batch) => this.classifyRawBatch(batch, taxConfig));
+  }
+
+  /**
+   * One raw round trip to Groq for a single batch, with no retry or size
+   * handling of its own — classifyTransactionsBatch wraps this with
+   * classifyInRobustBatches (see robust-batch.ts) so arbitrarily large
+   * imports stay reliable. Keep this focused on "one call, one batch."
+   */
+  private async classifyRawBatch(
+    transactions: ClassifiableTxn[],
     taxConfig: CountryTaxConfig
   ): Promise<ClassificationResult[]> {
     if (transactions.length === 0) return [];
