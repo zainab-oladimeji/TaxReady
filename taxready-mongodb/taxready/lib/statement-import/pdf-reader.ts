@@ -1,22 +1,30 @@
-import { PDFParse } from "pdf-parse";
+import { extractText, getDocumentProxy } from "unpdf";
 
 /**
- * Extracts plain text from an uploaded bank statement PDF. This only
- * covers text-based PDFs — a genuine export from a bank's website or app.
- * A scanned/photographed statement (an image with no embedded text layer)
- * comes back with little or no text; the caller (see the parse-statement
- * route) surfaces that as a clear "we couldn't read this" error rather
- * than pretending it worked with zero transactions. OCR support for
- * scanned statements would be a separate, larger feature.
+ * Extracts plain text from an uploaded bank statement PDF.
+ *
+ * Deliberately uses unpdf rather than pdf-parse (the original choice
+ * here): pdf-parse wraps pdfjs-dist's canvas-rendering path, which
+ * depends on the native @napi-rs/canvas module and browser globals
+ * (DOMMatrix, ImageData) that Vercel's serverless Node runtime doesn't
+ * provide — confirmed in production ("ReferenceError: DOMMatrix is not
+ * defined", "Cannot find module '@napi-rs/canvas'") the first time a
+ * statement was uploaded after deploying. unpdf ships PDF.js's own
+ * "serverless" build with zero native dependencies specifically for this
+ * environment, so there's no canvas/worker setup to get wrong.
+ *
+ * This only covers text-based PDFs — a genuine export from a bank's
+ * website or app. A scanned/photographed statement (an image with no
+ * embedded text layer) comes back with little or no text; the caller
+ * (see the parse-statement route) surfaces that as a clear "we couldn't
+ * read this" error rather than pretending it worked with zero
+ * transactions. OCR support for scanned statements would be a separate,
+ * larger feature.
  */
 export async function extractPdfText(buffer: Buffer): Promise<string> {
-  const parser = new PDFParse({ data: buffer });
-  try {
-    const result = await parser.getText();
-    return result.text;
-  } finally {
-    await parser.destroy();
-  }
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text;
 }
 
 /**
