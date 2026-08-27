@@ -53,6 +53,17 @@ export async function enqueueClassifyChunk(payload: {
     // Chunk workers are idempotent-ish (advanceImportJob only ever adds
     // progress, never re-processes on its own), but a handful of automatic
     // retries on transient failures is still exactly what we want here.
-    retries: 3
+    retries: 3,
+    // Caps how many classify-chunk invocations QStash runs at once across
+    // ALL imports (same key = shared limit). Every concurrent invocation
+    // is a separate Vercel function instance opening its own MongoDB
+    // connection pool (see lib/db/mongodb.ts) — on an Atlas M0 cluster's
+    // 500-connection cap, uncapped parallelism from a large import is
+    // exactly what triggered a "nearing maximum connections" alert in
+    // production. This is a second layer of protection on top of the
+    // small per-instance pool size in mongodb.ts, not a replacement for
+    // it — Vercel's own concurrent-invocation limit and any other traffic
+    // hitting the DB aren't bounded by this.
+    flowControl: { key: "classify-chunk", parallelism: 10 }
   });
 }
