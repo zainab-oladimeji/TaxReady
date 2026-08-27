@@ -1,5 +1,13 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AIProvider, COMPLIANCE_DISCLAIMER } from "./provider";
+import { classifyInRobustBatches, ClassifiableTxn } from "./robust-batch";
+import {
+  buildColumnDetectionPrompt,
+  buildTextExtractionPrompt,
+  validateColumnMapping,
+  validateExtractedRows
+} from "./statement-prompts";
+import { withRetry } from "./retry";
 import {
   Anomaly,
   ClassificationResult,
@@ -8,7 +16,9 @@ import {
   ReceiptExtraction,
   PeriodSummary,
   Transaction,
-  CountryTaxConfig
+  CountryTaxConfig,
+  StatementColumnMapping,
+  NormalizedStatementRow
 } from "@/types";
 
 /**
@@ -65,6 +75,20 @@ export class GeminiApiKeyProvider implements AIProvider {
     transactions: Pick<Transaction, "description" | "amount" | "type" | "currency" | "merchant">[],
     taxConfig: CountryTaxConfig
   ): Promise<ClassificationResult[]> {
+    return classifyInRobustBatches(transactions, (batch) => this.classifyRawBatch(batch, taxConfig));
+  }
+
+  /**
+   * One raw round trip for a single batch, with no retry or size handling
+   * of its own — classifyTransactionsBatch wraps this with
+   * classifyInRobustBatches (see robust-batch.ts) so arbitrarily large
+   * imports stay reliable even if a batch comes back misaligned. Keep
+   * this focused on "one call, one batch."
+   */
+  private async classifyRawBatch(
+    transactions: ClassifiableTxn[],
+    taxConfig: CountryTaxConfig
+  ): Promise<ClassificationResult[]> {
     if (transactions.length === 0) return [];
 
     const system =
@@ -105,6 +129,30 @@ export class GeminiApiKeyProvider implements AIProvider {
       { inlineData: { mimeType: input.mimeType, data: input.base64 } }
     ]);
     return parseJsonResponse<ReceiptExtraction>(result.response.text());
+  }
+
+  async detectStatementColumns(
+    sampleRows: (string | number | null | undefined)[][],
+    context: { fileName: string; sheetName?: string }
+  ): Promise<StatementColumnMapping> {
+    const { system, user } = buildColumnDetectionPrompt(sampleRows, context);
+    return withRetry(async () => {
+      const model = this.generativeModel(system);
+      const result = await model.generateContent(user);
+      return validateColumnMapping(parseJsonResponse<unknown>(result.response.text()));
+    });
+  }
+
+  async extractStatementTransactionsFromText(
+    textChunk: string,
+    context: { fileName: string }
+  ): Promise<NormalizedStatementRow[]> {
+    const { system, user } = buildTextExtractionPrompt(textChunk, context);
+    return withRetry(async () => {
+      const model = this.generativeModel(system);
+      const result = await model.generateContent(user);
+      return validateExtractedRows(parseJsonResponse<unknown>(result.response.text()));
+    });
   }
 
   async summarizePeriod(context: FinancialContext, periodLabel: string): Promise<PeriodSummary> {

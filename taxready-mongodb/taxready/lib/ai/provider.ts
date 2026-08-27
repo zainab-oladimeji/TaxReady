@@ -5,7 +5,9 @@ import {
   AIResponse,
   ReceiptExtraction,
   PeriodSummary,
-  Transaction
+  Transaction,
+  StatementColumnMapping,
+  NormalizedStatementRow
 } from "@/types";
 import { CountryTaxConfig } from "@/types";
 
@@ -41,6 +43,35 @@ export interface AIProvider {
   ): Promise<ClassificationResult[]>;
 
   extractReceipt(input: { fileName: string; mimeType: string; base64?: string }): Promise<ReceiptExtraction>;
+
+  /**
+   * One-time layout detection for a bank statement sheet/table (see
+   * lib/statement-import/*). Given a small sample of rows (NOT the whole
+   * sheet — a few dozen rows is plenty), figures out which row the real
+   * data starts on and which column is the date / description / amount.
+   * The result is applied deterministically to every row of the full
+   * sheet by lib/statement-import/apply-mapping.ts — this is the only AI
+   * call involved in reading an Excel/CSV statement, regardless of how
+   * many thousand rows it has.
+   */
+  detectStatementColumns(
+    sampleRows: (string | number | null | undefined)[][],
+    context: { fileName: string; sheetName?: string }
+  ): Promise<StatementColumnMapping>;
+
+  /**
+   * Extracts whatever transactions appear in one chunk of raw text pulled
+   * from a bank statement PDF (see lib/statement-import/pdf-reader.ts).
+   * Unlike detectStatementColumns, this runs once per chunk rather than
+   * once per file — PDF text has no reliable column structure to detect
+   * once and replay deterministically, so each chunk is read directly.
+   * May return zero results for a chunk with no transactions in it (a
+   * cover page, a summary section) — that's normal, not an error.
+   */
+  extractStatementTransactionsFromText(
+    textChunk: string,
+    context: { fileName: string }
+  ): Promise<NormalizedStatementRow[]>;
 
   summarizePeriod(context: FinancialContext, periodLabel: string): Promise<PeriodSummary>;
 

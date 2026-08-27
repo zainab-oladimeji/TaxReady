@@ -1,4 +1,5 @@
 import { AIProvider, COMPLIANCE_DISCLAIMER } from "./provider";
+import { parseFlexibleDate } from "@/lib/statement-import/parse-date";
 import {
   Anomaly,
   ClassificationResult,
@@ -8,7 +9,9 @@ import {
   PeriodSummary,
   Transaction,
   CountryTaxConfig,
-  TaxRelevance
+  TaxRelevance,
+  StatementColumnMapping,
+  NormalizedStatementRow
 } from "@/types";
 
 // Keyword rules used only to make the offline demo feel intelligent and
@@ -105,6 +108,127 @@ export class MockAIProvider implements AIProvider {
       paymentMethod: seed % 2 === 0 ? "Card" : "Transfer",
       confidence: hashConfidence(input.fileName)
     };
+  }
+
+  async detectStatementColumns(
+    sampleRows: (string | number | null | undefined)[][],
+    _context: { fileName: string; sheetName?: string }
+  ): Promise<StatementColumnMapping> {
+    // Offline heuristic so the demo/mock path can still exercise the
+    // statement-import feature without any AI credentials: scan the first
+    // handful of rows for one that looks like a header (cells matching
+    // known column-name keywords), then map by keyword. This is
+    // deliberately simple — it's the same role a real AI call plays for
+    // detectStatementColumns, just rule-based instead of model-based, and
+    // only used when no GROQ_API_KEY/GEMINI credentials are configured.
+    const maxScanRows = Math.min(sampleRows.length, 15);
+
+    for (let i = 0; i < maxScanRows; i++) {
+      const row = sampleRows[i].map((c) => String(c ?? "").toLowerCase().trim());
+
+      const dateIdx = row.findIndex((c) => /date/.test(c));
+      const descIdx = row.findIndex((c) => /description|narration|details|memo/.test(c));
+      const debitIdx = row.findIndex((c) => /debit/.test(c));
+      const creditIdx = row.findIndex((c) => /credit/.test(c));
+      const amountIdx = row.findIndex((c) => /^amount$/.test(c) || /amount/.test(c));
+      const typeIdx = row.findIndex((c) => /^type$/.test(c) || /dr\/cr|drcr/.test(c));
+
+      if (dateIdx === -1 || descIdx === -1) continue;
+
+      if (debitIdx !== -1 && creditIdx !== -1) {
+        return {
+          dataStartRowIndex: i + 1,
+          dateColumnIndex: dateIdx,
+          descriptionColumnIndex: descIdx,
+          amountMode: "separate_debit_credit",
+          debitColumnIndex: debitIdx,
+          creditColumnIndex: creditIdx,
+          confidence: 0.8,
+          notes: "Detected via mock provider's keyword heuristic (no live AI credentials configured)."
+        };
+      }
+
+      if (amountIdx !== -1 && typeIdx !== -1) {
+        return {
+          dataStartRowIndex: i + 1,
+          dateColumnIndex: dateIdx,
+          descriptionColumnIndex: descIdx,
+          amountMode: "single_with_type_column",
+          amountColumnIndex: amountIdx,
+          typeColumnIndex: typeIdx,
+          confidence: 0.8,
+          notes: "Detected via mock provider's keyword heuristic (no live AI credentials configured)."
+        };
+      }
+
+      if (amountIdx !== -1) {
+        return {
+          dataStartRowIndex: i + 1,
+          dateColumnIndex: dateIdx,
+          descriptionColumnIndex: descIdx,
+          amountMode: "single_signed",
+          amountColumnIndex: amountIdx,
+          positiveMeans: "income",
+          confidence: 0.6,
+          notes: "Detected via mock provider's keyword heuristic (no live AI credentials configured)."
+        };
+      }
+    }
+
+    // Fall back to the standard shape this app's own CSV template uses
+    // (date, description, amount, type) — see components/dashboard/
+    // import-csv-modal.tsx's hint text — rather than failing outright.
+    return {
+      dataStartRowIndex: 1,
+      dateColumnIndex: 0,
+      descriptionColumnIndex: 1,
+      amountMode: "single_with_type_column",
+      amountColumnIndex: 2,
+      typeColumnIndex: 3,
+      confidence: 0.3,
+      notes: "No recognizable header found — assumed the standard date/description/amount/type layout."
+    };
+  }
+
+  async extractStatementTransactionsFromText(
+    textChunk: string,
+    _context: { fileName: string }
+  ): Promise<NormalizedStatementRow[]> {
+    // Offline heuristic: look for lines containing both a date-like token
+    // and a number, and take the largest number on the line as the
+    // amount. Good enough to exercise the PDF-import UI/pipeline in
+    // demo/mock mode — not intended to be as accurate as the real
+    // AI-backed extraction.
+    const rows: NormalizedStatementRow[] = [];
+    const dateToken = /\b(\d{1,2}[\/\-\s][A-Za-z]{3,9}[\/\-\s]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/;
+    const amountToken = /-?\d[\d,]*\.\d{2}/g;
+
+    for (const line of textChunk.split("\n")) {
+      const dateMatch = line.match(dateToken);
+      if (!dateMatch) continue;
+
+      const amounts = [...line.matchAll(amountToken)].map((m) => m[0]);
+      if (amounts.length === 0) continue;
+
+      const lastAmountRaw = amounts[amounts.length - 1];
+      const amount = Math.abs(Number.parseFloat(lastAmountRaw.replace(/,/g, "")));
+      if (!Number.isFinite(amount) || amount === 0) continue;
+
+      const description = line.replace(dateMatch[0], "").replace(lastAmountRaw, "").trim().replace(/\s{2,}/g, " ");
+      if (!description) continue;
+
+      const date = parseFlexibleDate(dateMatch[0]);
+      if (!date) continue;
+
+      rows.push({
+        date,
+        description,
+        amount,
+        type: lastAmountRaw.trim().startsWith("-") ? "expense" : "income"
+      });
+    }
+
+    return rows;
   }
 
   async summarizePeriod(context: FinancialContext, periodLabel: string): Promise<PeriodSummary> {

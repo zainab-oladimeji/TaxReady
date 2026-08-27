@@ -1,6 +1,13 @@
 import { AIProvider, COMPLIANCE_DISCLAIMER } from "./provider";
 import { classifyInRobustBatches, ClassifiableTxn } from "./robust-batch";
 import {
+  buildColumnDetectionPrompt,
+  buildTextExtractionPrompt,
+  validateColumnMapping,
+  validateExtractedRows
+} from "./statement-prompts";
+import { withRetry } from "./retry";
+import {
   Anomaly,
   ClassificationResult,
   FinancialContext,
@@ -8,7 +15,9 @@ import {
   ReceiptExtraction,
   PeriodSummary,
   Transaction,
-  CountryTaxConfig
+  CountryTaxConfig,
+  StatementColumnMapping,
+  NormalizedStatementRow
 } from "@/types";
 
 /**
@@ -138,6 +147,28 @@ export class GroqProvider implements AIProvider {
 
     const text = await this.chat(this.visionModel, system, userContent);
     return parseJsonResponse<ReceiptExtraction>(text);
+  }
+
+  async detectStatementColumns(
+    sampleRows: (string | number | null | undefined)[][],
+    context: { fileName: string; sheetName?: string }
+  ): Promise<StatementColumnMapping> {
+    const { system, user } = buildColumnDetectionPrompt(sampleRows, context);
+    return withRetry(async () => {
+      const text = await this.chat(this.textModel, system, user);
+      return validateColumnMapping(parseJsonResponse<unknown>(text));
+    });
+  }
+
+  async extractStatementTransactionsFromText(
+    textChunk: string,
+    context: { fileName: string }
+  ): Promise<NormalizedStatementRow[]> {
+    const { system, user } = buildTextExtractionPrompt(textChunk, context);
+    return withRetry(async () => {
+      const text = await this.chat(this.textModel, system, user);
+      return validateExtractedRows(parseJsonResponse<unknown>(text));
+    });
   }
 
   async summarizePeriod(context: FinancialContext, periodLabel: string): Promise<PeriodSummary> {

@@ -2,6 +2,13 @@ import { VertexAI } from "@google-cloud/vertexai";
 import { AIProvider, COMPLIANCE_DISCLAIMER } from "./provider";
 import { classifyInRobustBatches, ClassifiableTxn } from "./robust-batch";
 import {
+  buildColumnDetectionPrompt,
+  buildTextExtractionPrompt,
+  validateColumnMapping,
+  validateExtractedRows
+} from "./statement-prompts";
+import { withRetry } from "./retry";
+import {
   Anomaly,
   ClassificationResult,
   FinancialContext,
@@ -9,7 +16,9 @@ import {
   ReceiptExtraction,
   PeriodSummary,
   Transaction,
-  CountryTaxConfig
+  CountryTaxConfig,
+  StatementColumnMapping,
+  NormalizedStatementRow
 } from "@/types";
 
 /**
@@ -124,6 +133,30 @@ export class GeminiAIProvider implements AIProvider {
       ]
     });
     return parseJsonResponse<ReceiptExtraction>(result);
+  }
+
+  async detectStatementColumns(
+    sampleRows: (string | number | null | undefined)[][],
+    context: { fileName: string; sheetName?: string }
+  ): Promise<StatementColumnMapping> {
+    const { system, user } = buildColumnDetectionPrompt(sampleRows, context);
+    return withRetry(async () => {
+      const model = this.generativeModel(system);
+      const result = await model.generateContent(user);
+      return validateColumnMapping(parseJsonResponse<unknown>(result));
+    });
+  }
+
+  async extractStatementTransactionsFromText(
+    textChunk: string,
+    context: { fileName: string }
+  ): Promise<NormalizedStatementRow[]> {
+    const { system, user } = buildTextExtractionPrompt(textChunk, context);
+    return withRetry(async () => {
+      const model = this.generativeModel(system);
+      const result = await model.generateContent(user);
+      return validateExtractedRows(parseJsonResponse<unknown>(result));
+    });
   }
 
   async summarizePeriod(context: FinancialContext, periodLabel: string): Promise<PeriodSummary> {

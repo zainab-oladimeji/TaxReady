@@ -52,6 +52,42 @@ export interface ImportJob {
   updatedAt: string;
 }
 
+// Bulk statement import (see lib/statement-import/*, app/api/transactions/
+// parse-statement). An AI call inspects a small sample of a sheet/table
+// once to figure out its layout; everything after that is deterministic
+// code (lib/statement-import/apply-mapping.ts) — no AI cost or randomness
+// per row.
+export type StatementAmountMode = "single_signed" | "single_with_type_column" | "separate_debit_credit";
+
+export interface StatementColumnMapping {
+  // Index within the FULL row array (not just the sample) where actual
+  // transaction data begins — skips title/metadata rows and the header
+  // row itself.
+  dataStartRowIndex: number;
+  dateColumnIndex: number;
+  descriptionColumnIndex: number;
+  amountMode: StatementAmountMode;
+  amountColumnIndex?: number; // single_signed / single_with_type_column
+  typeColumnIndex?: number; // single_with_type_column — e.g. "DEBIT"/"CREDIT", "Dr"/"Cr"
+  debitColumnIndex?: number; // separate_debit_credit
+  creditColumnIndex?: number; // separate_debit_credit
+  // single_signed only: what a positive number means. Most banks show
+  // expenses as negative, but some do the opposite.
+  positiveMeans?: "income" | "expense";
+  // Free-text hint like "dd MMM yyyy" — advisory; parseFlexibleDate tries
+  // this first but falls back to a fixed list of common formats.
+  dateFormatHint?: string;
+  confidence: number;
+  notes?: string;
+}
+
+export interface NormalizedStatementRow {
+  date: string; // YYYY-MM-DD
+  description: string;
+  amount: number;
+  type: TransactionType;
+}
+
 export interface Receipt {
   id: string;
   businessId: string;
