@@ -44,6 +44,13 @@ interface DataContextValue {
   // null the rest of the time, including during the old-style synchronous
   // import fallback, which has no meaningful "in progress" count to show.
   importProgress: { total: number; processed: number } | null;
+  // Re-fetches the transaction list from the server. Exposed mainly for
+  // the PDF background-import flow (import-csv-modal.tsx), which starts
+  // a job via app/api/transactions/import-pdf and polls its own status
+  // directly rather than going through importTransactions — it still
+  // needs a way to pull the newly-inserted transactions into view once
+  // that job finishes.
+  refreshTransactions: () => Promise<void>;
   isLive: boolean;
   isLoading: boolean;
 }
@@ -336,6 +343,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     updateTransactionCategory,
     isProcessing,
     importProgress,
+    refreshTransactions,
     isLive,
     isLoading
   };

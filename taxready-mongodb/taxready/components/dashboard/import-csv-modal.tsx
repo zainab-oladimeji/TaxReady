@@ -28,14 +28,16 @@ interface RawCsvRow {
 // ceiling for sanity/UX reasons — this matches the backend's own cap.
 const IMPORT_ROW_CAP = 5000;
 
-// .xlsx/.xls/.pdf all need a server round trip (see
-// app/api/transactions/parse-statement) to have their layout figured out
-// — .csv stays fully client-side via Papa Parse below, since its fixed
-// four-column shape is simple enough not to need that.
-const STATEMENT_MIME_TYPES: Record<string, string> = {
+// .xlsx/.xls need a server round trip (see app/api/transactions/
+// parse-statement) to have their layout figured out — .csv stays fully
+// client-side via Papa Parse below, since its fixed four-column shape is
+// simple enough not to need that. .pdf is handled completely separately
+// (see handlePdfFile) — it always runs as a background job with its own
+// progress UI, since a PDF's total text can need more AI tokens than a
+// free-tier provider's per-minute quota allows to process in one request.
+const SPREADSHEET_MIME_TYPES: Record<string, string> = {
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  xls: "application/vnd.ms-excel",
-  pdf: "application/pdf"
+  xls: "application/vnd.ms-excel"
 };
 
 function normalizeType(raw: string): "income" | "expense" {
@@ -43,13 +45,19 @@ function normalizeType(raw: string): "income" | "expense" {
 }
 
 export function ImportCsvModal({ onClose }: { onClose: () => void }) {
-  const { importTransactions, isProcessing, importProgress } = useTaxReadyData();
+  const { importTransactions, isProcessing, importProgress, refreshTransactions } = useTaxReadyData();
   const [rows, setRows] = useState<NormalizedRow[] | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [isParsing, setIsParsing] = useState(false);
   const [done, setDone] = useState(false);
+  const [importedCount, setImportedCount] = useState(0);
+
+  // PDF-specific state — separate from the rows/preview flow above,
+  // since a PDF import starts a background job immediately with no
+  // preview step (the transactions aren't known until extraction runs).
+  const [pdfJob, setPdfJob] = useState<{ jobId: string; total: number; processed: number } | null>(null);
 
   function handleCsvFile(file: File) {
     Papa.parse<RawCsvRow>(file, {
@@ -79,7 +87,7 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     });
   }
 
-  async function handleStatementFile(file: File, mimeType: string) {
+  async function handleSpreadsheetFile(file: File, mimeType: string) {
     setIsParsing(true);
     try {
       const base64 = await fileToBase64(file);
@@ -113,6 +121,64 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function handlePdfFile(file: File) {
+    setIsParsing(true);
+    try {
+      const base64 = await fileToBase64(file);
+      const startRes = await fetch("/api/transactions/import-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, base64 })
+      });
+      const startData = await startRes.json();
+
+      if (!startRes.ok && startRes.status !== 207) {
+        setError(startData.error ?? "We couldn't read this PDF.");
+        return;
+      }
+      if (startData.warning) setWarnings([startData.warning]);
+
+      const jobId: string = startData.jobId;
+      const total: number = startData.totalChunks;
+      setPdfJob({ jobId, total, processed: 0 });
+
+      await new Promise<void>((resolve) => {
+        const poll = async () => {
+          const statusRes = await fetch(`/api/transactions/import/${jobId}`);
+          if (!statusRes.ok) {
+            resolve();
+            return;
+          }
+          const { job } = await statusRes.json();
+          if (!job) {
+            resolve();
+            return;
+          }
+          setPdfJob({ jobId, total: job.totalRows, processed: job.processedRows });
+          if (job.reviewRows > 0) {
+            // reviewRows accumulates as chunks complete — keep the most
+            // recent count visible as a running "N flagged for review"
+            // note rather than waiting for the very end.
+            setImportedCount(job.reviewRows);
+          }
+          if (job.status === "completed" || job.status === "failed") {
+            resolve();
+            return;
+          }
+          setTimeout(poll, 2000);
+        };
+        poll();
+      });
+
+      await refreshTransactions();
+      setDone(true);
+    } catch {
+      setError("We couldn't read this statement. Check your connection and try again.");
+    } finally {
+      setIsParsing(false);
+    }
+  }
+
   function handleFile(file: File) {
     setFileName(file.name);
     setError(null);
@@ -123,17 +189,22 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
       handleCsvFile(file);
       return;
     }
+    if (extension === "pdf") {
+      void handlePdfFile(file);
+      return;
+    }
 
-    const mimeType = extension ? STATEMENT_MIME_TYPES[extension] : undefined;
+    const mimeType = extension ? SPREADSHEET_MIME_TYPES[extension] : undefined;
     if (!mimeType) {
       setError("Unsupported file type. Upload a CSV, Excel (.xlsx/.xls), or PDF bank statement.");
       return;
     }
-    void handleStatementFile(file, mimeType);
+    void handleSpreadsheetFile(file, mimeType);
   }
 
   async function handleImport() {
     if (!rows) return;
+    setImportedCount(rows.length);
     await importTransactions(rows, fileName);
     setDone(true);
   }
@@ -151,15 +222,44 @@ export function ImportCsvModal({ onClose }: { onClose: () => void }) {
         {done ? (
           <div className="py-6 text-center">
             <p className="font-medium text-ink">Processing complete.</p>
-            <p className="mt-1 text-sm text-ink/55">{rows?.length} transactions were categorized with AI and added to your records.</p>
+            <p className="mt-1 text-sm text-ink/55">
+              {importedCount > 0 ? `${importedCount} transactions were` : "Transactions were"} categorized with AI and added
+              to your records.
+            </p>
+            {warnings.length > 0 && (
+              <div className="mt-3 space-y-1 rounded-lg bg-alert/10 p-2 text-left">
+                {warnings.map((w, i) => (
+                  <p key={i} className="flex items-start gap-1.5 text-xs text-alert">
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
             <Button className="mt-5" onClick={onClose}>
               Done
             </Button>
           </div>
+        ) : pdfJob ? (
+          <div className="py-6 text-center">
+            <p className="text-sm font-medium text-ink">
+              Reading &amp; classifying {pdfJob.processed} of {pdfJob.total} sections of {fileName}...
+            </p>
+            {pdfJob.total > 0 && (
+              <div className="mx-auto mt-3 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-sand">
+                <div
+                  className="h-full rounded-full bg-brand-500 transition-all duration-300"
+                  style={{ width: `${Math.min(100, (pdfJob.processed / pdfJob.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            <p className="mt-3 text-xs text-ink/45">
+              PDF statements take longer than Excel or CSV — you can close this and keep using TaxReady while it finishes.
+            </p>
+          </div>
         ) : isParsing ? (
           <div className="py-10 text-center">
             <p className="text-sm font-medium text-ink">Reading {fileName}...</p>
-            <p className="mt-1 text-xs text-ink/50">This can take a little longer for PDF statements.</p>
           </div>
         ) : rows ? (
           <div>

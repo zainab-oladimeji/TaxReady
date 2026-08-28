@@ -189,6 +189,36 @@ export async function insertQueuedTransactions(
   return docs.map((d, i) => ({ id: String(result.insertedIds[i]), ...d }) as Transaction);
 }
 
+// Used by the PDF background-import worker (app/api/jobs/extract-pdf-chunk),
+// which extracts AND classifies a chunk of statement text in one worker
+// invocation — unlike the CSV/Excel path, there's no upfront "insert as
+// queued, classify later" step, since the transactions themselves aren't
+// known until extraction runs. Inserts rows already carrying their final
+// classification.
+export async function insertClassifiedTransactions(
+  businessId: string,
+  importJobId: string,
+  rows: {
+    date: string;
+    description: string;
+    amount: number;
+    currency: string;
+    type: Transaction["type"];
+    category: string;
+    subcategory?: string;
+    taxRelevance: Transaction["taxRelevance"];
+    aiConfidence: number;
+    aiReason: string;
+    status: Transaction["status"];
+  }[]
+): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const docs = rows.map((row) => ({ ...row, businessId, importJobId, createdAt: now, updatedAt: now }));
+  await db.collection("transactions").insertMany(docs);
+}
+
 export async function listReceipts(businessId: string): Promise<Receipt[]> {
   const db = await getDb();
   const docs = await db.collection("receipts").find({ businessId }).sort({ createdAt: -1 }).limit(1000).toArray();

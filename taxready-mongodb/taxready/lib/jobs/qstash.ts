@@ -64,6 +64,37 @@ export async function enqueueClassifyChunk(payload: {
     // small per-instance pool size in mongodb.ts, not a replacement for
     // it — Vercel's own concurrent-invocation limit and any other traffic
     // hitting the DB aren't bounded by this.
-    flowControl: { key: "classify-chunk", parallelism: 10 }
+    flowControl: { key: "ai-provider-calls", parallelism: 10 }
+  });
+}
+
+export async function enqueueExtractPdfChunk(payload: {
+  jobId: string;
+  businessId: string;
+  fileName: string;
+  textChunk: string;
+}): Promise<void> {
+  await getClient().publishJSON({
+    url: `${appBaseUrl()}/api/jobs/extract-pdf-chunk`,
+    body: payload,
+    // A PDF text chunk can genuinely fail its first few attempts if the
+    // AI provider's per-minute quota is exhausted (see the long comment
+    // in app/api/jobs/extract-pdf-chunk/route.ts) — this is expected and
+    // recoverable, not a sign the chunk is unprocessable. QStash spaces
+    // retries out with its own backoff BETWEEN separate, short-lived
+    // invocations, which is what actually resolves a per-minute quota
+    // limit; retrying inside one long-running function (the original,
+    // broken approach) can't wait out a 60-second window without risking
+    // that function's own execution timeout. More retries than
+    // classify-chunk's because quota exhaustion here is the norm for a
+    // large statement, not the exception.
+    retries: 5,
+    // Shares one flow-control key with classify-chunk (see above) so the
+    // two pipelines' concurrent AI calls are bounded together, not each
+    // given an independent budget that can stack on top of the other —
+    // a PDF import and a CSV/Excel import running at the same time
+    // shouldn't be able to double the effective concurrency against the
+    // AI provider's quota.
+    flowControl: { key: "ai-provider-calls", parallelism: 10 }
   });
 }
